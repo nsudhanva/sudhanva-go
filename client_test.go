@@ -10,6 +10,15 @@ import (
 	"time"
 )
 
+func TestVersionIdentifiesClient(t *testing.T) {
+	if Version != "0.1.0" {
+		t.Fatalf("unexpected SDK version: %s", Version)
+	}
+	if userAgent != "sudhanva-go/"+Version {
+		t.Fatalf("user agent and SDK version differ: %s", userAgent)
+	}
+}
+
 func TestPostsEncodesFiltersAndIdentifiesClient(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		if request.URL.Path != "/api/v1/posts" {
