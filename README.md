@@ -9,7 +9,7 @@ The API is public and requires no credentials. Do not send private data.
 ## Install
 
 ```bash
-go get github.com/nsudhanva/sudhanva-go@v0.1.0
+go get github.com/nsudhanva/sudhanva-go@v0.2.0
 ```
 
 ## Use

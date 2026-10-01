@@ -15,7 +15,7 @@ import (
 
 const (
 	// Version is the semantic version of this SDK release line.
-	Version        = "0.1.0"
+	Version        = "0.2.0"
 	defaultBaseURL = "https://sudhanva.me/api/v1"
 	userAgent      = "sudhanva-go/" + Version
 )

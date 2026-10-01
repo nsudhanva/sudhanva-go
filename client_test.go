@@ -11,7 +11,7 @@ import (
 )
 
 func TestVersionIdentifiesClient(t *testing.T) {
-	if Version != "0.1.0" {
+	if Version != "0.2.0" {
 		t.Fatalf("unexpected SDK version: %s", Version)
 	}
 	if userAgent != "sudhanva-go/"+Version {
