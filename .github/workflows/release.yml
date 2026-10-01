@@ -1,0 +1,38 @@
+name: release
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Version tag to announce to the Go module proxy, such as v0.2.0
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  announce:
+    runs-on: ubuntu-latest
+    env:
+      TAG: ${{ github.event.release.tag_name || inputs.tag }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ env.TAG }}
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+      - run: go test ./...
+      - run: go vet ./...
+      # Go has no registry upload: asking the proxy for the tag makes it fetch
+      # and cache the module so `go get` and pkg.go.dev see it.
+      - run: |
+          for attempt in 1 2 3 4 5; do
+            if curl -fsS "https://proxy.golang.org/github.com/nsudhanva/sudhanva-go/@v/${TAG}.info"; then
+              exit 0
+            fi
+            sleep 15
+          done
+          exit 1
