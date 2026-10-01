@@ -30,7 +30,7 @@ type Client struct {
 // Option configures a Client.
 type Option func(*Client) error
 
-// WithBaseURL replaces the production API base URL. It is primarily useful for tests and proxies.
+// WithBaseURL replaces the production API base URL. Use it for tests and proxies.
 func WithBaseURL(rawURL string) Option {
 	return func(client *Client) error {
 		parsed, err := url.Parse(strings.TrimRight(rawURL, "/"))
