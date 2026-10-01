@@ -137,3 +137,114 @@ func TestStructuredErrorsAreExposed(t *testing.T) {
 		t.Fatalf("unexpected APIError: %+v", apiError)
 	}
 }
+
+func errorFrom(t *testing.T, status int, contentType, body string, call func(*Client) error) *APIError {
+	t.Helper()
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+		writer.Header().Set("Content-Type", contentType)
+		writer.WriteHeader(status)
+		_, _ = writer.Write([]byte(body))
+	}))
+	defer server.Close()
+
+	client, err := NewClient(WithBaseURL(server.URL + "/api/v1"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = call(client)
+	var apiError *APIError
+	if !errors.As(err, &apiError) {
+		t.Fatalf("expected APIError, got %v", err)
+	}
+	if apiError.StatusCode != status || string(apiError.Body) != body {
+		t.Fatalf("unexpected status or body: %+v", apiError)
+	}
+	return apiError
+}
+
+func TestErrorEnvelopeKeepsHintAndDocsURL(t *testing.T) {
+	body := `{"error":{"code":"POST_NOT_FOUND","message":"No published post exists.","hint":"List published posts first.","docs_url":"https://sudhanva.me/developers/"}}`
+	apiError := errorFrom(t, http.StatusNotFound, "application/json", body, func(client *Client) error {
+		_, err := client.Post(context.Background(), "missing")
+		return err
+	})
+	if apiError.Code != "POST_NOT_FOUND" || apiError.Message != "No published post exists." ||
+		apiError.Hint != "List published posts first." || apiError.DocsURL != "https://sudhanva.me/developers/" {
+		t.Fatalf("unexpected APIError: %+v", apiError)
+	}
+}
+
+func TestProblemDetailsAreExposed(t *testing.T) {
+	body := `{"type":"https://sudhanva.me/docs/profile-insights/#idempotency-key-reuse","title":"Idempotency-Key reused","status":422,"detail":"This key was already used with a different request body.","instance":"/api/v1/profile-insights"}`
+	apiError := errorFrom(t, http.StatusUnprocessableEntity, "application/problem+json", body, func(client *Client) error {
+		_, err := client.CreateProfileInsight(context.Background(), ProfileInsightRequest{Audience: "agent"}, "go-test-123")
+		return err
+	})
+	if apiError.Code != "idempotency-key-reuse" || apiError.Message != "This key was already used with a different request body." {
+		t.Fatalf("unexpected APIError: %+v", apiError)
+	}
+}
+
+func TestProblemWithoutDetailFallsBackToTitle(t *testing.T) {
+	body := `{"type":"about:blank","title":"Service Unavailable","status":503}`
+	apiError := errorFrom(t, http.StatusServiceUnavailable, "application/problem+json", body, func(client *Client) error {
+		_, err := client.ProfileInsight(context.Background(), "pi_test")
+		return err
+	})
+	if apiError.Code != "Service Unavailable" || apiError.Message != "Service Unavailable" {
+		t.Fatalf("unexpected APIError: %+v", apiError)
+	}
+}
+
+func TestUnexpectedErrorBodiesStillReturnAPIError(t *testing.T) {
+	for _, body := range []string{`["unexpected"]`, `"oops"`, `null`, `not json`, ``} {
+		apiError := errorFrom(t, http.StatusBadGateway, "application/json", body, func(client *Client) error {
+			_, err := client.Profile(context.Background())
+			return err
+		})
+		if apiError.Code != "api_error" || apiError.Message != "request failed" {
+			t.Fatalf("body %q: unexpected APIError: %+v", body, apiError)
+		}
+	}
+	apiError := errorFrom(t, http.StatusBadGateway, "application/json", `{"error":"Bad gateway"}`, func(client *Client) error {
+		_, err := client.Profile(context.Background())
+		return err
+	})
+	if apiError.Code != "api_error" || apiError.Message != "Bad gateway" {
+		t.Fatalf("unexpected APIError: %+v", apiError)
+	}
+}
+
+func TestResponsesDecodePublishedFields(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		writer.Header().Set("Content-Type", "application/json")
+		switch request.URL.Path {
+		case "/api/v1/profile":
+			_, _ = writer.Write([]byte(`{"profile":{"name":"Sudhanva Narayana","worksFor":{"name":"Example Co","url":"https://example.test/"}}}`))
+		case "/api/v1/batch":
+			_, _ = writer.Write([]byte(`{"count":1,"results":[{"id":"profile","status":200,"body":{}}]}`))
+		default:
+			http.NotFound(writer, request)
+		}
+	}))
+	defer server.Close()
+
+	client, err := NewClient(WithBaseURL(server.URL + "/api/v1"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	profile, err := client.Profile(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if profile.Profile.WorksFor != (Organization{Name: "Example Co", URL: "https://example.test/"}) {
+		t.Fatalf("unexpected worksFor: %+v", profile.Profile.WorksFor)
+	}
+	batch, err := client.Batch(context.Background(), []BatchOperation{{ID: "profile", Method: "GET", Path: "/profile"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if batch.Count != 1 || len(batch.Results) != 1 {
+		t.Fatalf("unexpected batch: %+v", batch)
+	}
+}

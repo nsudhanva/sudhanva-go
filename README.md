@@ -8,6 +8,8 @@ The API is public and requires no credentials. Do not send private data.
 
 ## Install
 
+Requires Go 1.26 or newer.
+
 ```bash
 go get github.com/nsudhanva/sudhanva-go@v0.2.0
 ```
@@ -50,6 +52,11 @@ job, err := client.CreateProfileInsight(
 	"my-workflow-2026-08-23",
 )
 ```
+
+Non-success responses return `*sudhanva.APIError` with `StatusCode`, `Code`, `Message`, `Hint`,
+`DocsURL`, and the raw `Body`. RFC 9457 problem responses from the profile-insight endpoints map
+`detail` (or `title`) to `Message` and the last segment of `type` to `Code`. `sudhanva.Version`
+reports the SDK version.
 
 ## API coverage
 

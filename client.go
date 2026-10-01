@@ -73,11 +73,14 @@ func NewClient(options ...Option) (*Client, error) {
 	return client, nil
 }
 
-// APIError is a structured non-success response from the API.
+// APIError is a structured non-success response from the API. It decodes both the standard
+// {"error": {...}} envelope and RFC 9457 application/problem+json bodies; Body keeps the raw response.
 type APIError struct {
 	StatusCode int
 	Code       string
 	Message    string
+	Hint       string
+	DocsURL    string
 	Body       json.RawMessage
 }
 
@@ -90,14 +93,21 @@ type ProfileResponse struct {
 }
 
 type Profile struct {
-	Name           string   `json:"name"`
-	JobTitle       string   `json:"jobTitle"`
-	Specialization string   `json:"specialization"`
-	Location       string   `json:"location"`
-	URL            string   `json:"url"`
-	Email          string   `json:"email"`
-	KnowsAbout     []string `json:"knowsAbout"`
-	SameAs         []string `json:"sameAs"`
+	Name           string       `json:"name"`
+	JobTitle       string       `json:"jobTitle"`
+	Specialization string       `json:"specialization"`
+	Location       string       `json:"location"`
+	URL            string       `json:"url"`
+	Email          string       `json:"email"`
+	WorksFor       Organization `json:"worksFor"`
+	KnowsAbout     []string     `json:"knowsAbout"`
+	SameAs         []string     `json:"sameAs"`
+}
+
+// Organization is the employer named in the published profile.
+type Organization struct {
+	Name string `json:"name"`
+	URL  string `json:"url"`
 }
 
 type Post struct {
@@ -142,6 +152,7 @@ type BatchResult struct {
 }
 
 type BatchResponse struct {
+	Count   int           `json:"count"`
 	Results []BatchResult `json:"results"`
 }
 
@@ -336,29 +347,68 @@ func (client *Client) do(ctx context.Context, method, endpoint string, body any,
 		return fmt.Errorf("read response: %w", err)
 	}
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
-		var envelope struct {
-			Code    string `json:"code"`
-			Message string `json:"message"`
-			Error   *struct {
-				Code    string `json:"code"`
-				Message string `json:"message"`
-			} `json:"error"`
-		}
-		_ = json.Unmarshal(data, &envelope)
-		if envelope.Error != nil {
-			envelope.Code = envelope.Error.Code
-			envelope.Message = envelope.Error.Message
-		}
-		if envelope.Code == "" {
-			envelope.Code = "api_error"
-		}
-		if envelope.Message == "" {
-			envelope.Message = "request failed"
-		}
-		return &APIError{StatusCode: response.StatusCode, Code: envelope.Code, Message: envelope.Message, Body: data}
+		return newAPIError(response.StatusCode, data)
 	}
 	if err := json.Unmarshal(data, target); err != nil {
 		return fmt.Errorf("decode response: %w", err)
 	}
 	return nil
+}
+
+// newAPIError decodes the standard error envelope or an RFC 9457 problem. Unexpected bodies, such as
+// arrays, plain text, or a string-valued "error", still produce an APIError with fallback values.
+func newAPIError(status int, data []byte) *APIError {
+	var body map[string]any
+	_ = json.Unmarshal(data, &body)
+	fields := body
+	nested, isObject := body["error"].(map[string]any)
+	if isObject {
+		fields = nested
+	}
+
+	text := func(object map[string]any, key string) string {
+		value, _ := object[key].(string)
+		return value
+	}
+	code := firstNonEmpty(text(fields, "code"), text(body, "code"))
+	message := firstNonEmpty(text(fields, "message"), text(body, "message"))
+	if code == "" && message == "" {
+		title := text(body, "title")
+		code = firstNonEmpty(problemCode(text(body, "type")), title)
+		message = firstNonEmpty(text(body, "detail"), title)
+	}
+	if message == "" {
+		message = text(body, "error")
+	}
+
+	return &APIError{
+		StatusCode: status,
+		Code:       firstNonEmpty(code, "api_error"),
+		Message:    firstNonEmpty(message, "request failed"),
+		Hint:       text(fields, "hint"),
+		DocsURL:    text(fields, "docs_url"),
+		Body:       data,
+	}
+}
+
+// problemCode returns the last fragment or path segment of an RFC 9457 problem type URI.
+func problemCode(problemType string) string {
+	if problemType == "" || problemType == "about:blank" {
+		return ""
+	}
+	base, fragment, _ := strings.Cut(problemType, "#")
+	if fragment != "" {
+		return fragment
+	}
+	base = strings.TrimRight(base, "/")
+	return base[strings.LastIndex(base, "/")+1:]
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if value != "" {
+			return value
+		}
+	}
+	return ""
 }
